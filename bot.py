@@ -62,7 +62,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🏠 *Учёт арендных платежей*\n\n"
         "Пересылай квитанции \\(фото, скрин, PDF\\) — я распознаю и посчитаю сальдо\\.\n\n"
         "Начни с добавления объектов\\.",
-        parse_mode="MarkdownV2",
+        parse_mode="Markdown",
         reply_markup=MAIN_MENU,
     )
 
@@ -129,7 +129,7 @@ async def setup_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     await update.message.reply_text(
         "📝 *Новый объект*\n\nКак называется? Например: «Кв Ленина 10\\-5» или «Студия СЦ»",
-        parse_mode="MarkdownV2",
+        parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove(),
     )
     return SETUP_NAME
@@ -138,7 +138,7 @@ async def setup_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["name"] = update.message.text.strip()
     await update.message.reply_text(
         f"✅ Название: *{ctx.user_data['name']}*\n\nСумма аренды в месяц \\(только цифры\\):",
-        parse_mode="MarkdownV2",
+        parse_mode="Markdown",
     )
     return SETUP_RENT
 
@@ -420,11 +420,11 @@ async def send_reminders(ctx: ContextTypes.DEFAULT_TYPE):
                 text=(
                     f"⏰ *Напоминание об оплате*\n\n"
                     f"📍 {obj['name']}\n"
-                    f"📅 Срок: {obj['due_day']}-е число\\  \\({remind_date.strftime('%d\\.%m\\.%Y')}\\)\n"
+                    f"📅 Срок: {obj['due_day']}-е число ({remind_date.strftime('%d\\.%m\\.%Y')}\\)\n"
                     f"💰 Ожидается: {plan:,.0f} ₽\n\n"
                     f"Оплата за {period} ещё не поступала\\."
                 ),
-                parse_mode="MarkdownV2",
+                parse_mode="Markdown",
             )
         except Exception as e:
             log.error(f"Reminder error for obj {obj['id']}: {e}")
