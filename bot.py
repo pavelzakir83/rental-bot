@@ -417,13 +417,17 @@ async def send_reminders(ctx: ContextTypes.DEFAULT_TYPE):
         try:
             await ctx.bot.send_message(
                 chat_id=obj["chat_id"],
-                text=(
-                    f"⏰ *Напоминание об оплате*\n\n"
-                    f"📍 {obj['name']}\n"
-                    f"📅 Срок: {obj['due_day']}-е число ({remind_date.strftime('%d\\.%m\\.%Y')}\\)\n"
-                    f"💰 Ожидается: {plan:,.0f} ₽\n\n"
-                    f"Оплата за {period} ещё не поступала\\."
-                ),
+                date_str = remind_date.strftime('%d.%m.%Y')
+                obj_name = obj['name']
+                due_day = obj['due_day']
+                msg = (
+                    "⏰ Напоминание об оплате\n\n"
+                    + "Объект: " + obj_name + "\n"
+                    + "Срок: " + str(due_day) + "-е число (" + date_str + ")\n"
+                    + "Ожидается: " + f"{plan:,.0f}" + " руб\n\n"
+                    + "Оплата за " + period + " ещё не поступала."
+                )
+                text=msg,
                 parse_mode="Markdown",
             )
         except Exception as e:
