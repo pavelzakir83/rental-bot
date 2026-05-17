@@ -57,7 +57,13 @@ def main_menu_msg():
 # СТАРТ / МЕНЮ
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def is_owner(update: Update) -> bool:
+    return update.effective_chat.id == OWNER_ID
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await is_owner(update):
+        await update.message.reply_text("Бот приватный.")
+        return
     await update.message.reply_text(
         "🏠 *Учёт арендных платежей*\n\n"
         "Пересылай квитанции \\(фото, скрин, PDF\\) — я распознаю и посчитаю сальдо\\.\n\n"
@@ -455,7 +461,7 @@ def main():
 
     # Диалог: добавить объект
     setup_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^➕ Добавить объект$"), setup_start)],
+        entry_points=[MessageHandler(filters.Regex("^➕ Добавить объект$") & filters.Chat(OWNER_ID), setup_start)],
         states={
             SETUP_NAME:    [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_name)],
             SETUP_RENT:    [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_rent)],
@@ -467,7 +473,7 @@ def main():
 
     # Диалог: изменить объект
     edit_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^✏️ Изменить объект$"), edit_start)],
+        entry_points=[MessageHandler(filters.Regex("^✏️ Изменить объект$") & filters.Chat(OWNER_ID), edit_start)],
         states={
             EDIT_CHOOSE:   [CallbackQueryHandler(edit_choose, pattern="^editobj:")],
             EDIT_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_name)],
@@ -478,15 +484,15 @@ def main():
         fallbacks=[CommandHandler("cancel", setup_cancel)],
     )
 
-    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("start", cmd_start, filters=filters.Chat(OWNER_ID)))
     app.add_handler(setup_conv)
     app.add_handler(edit_conv)
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.Chat(OWNER_ID), handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL & filters.Chat(OWNER_ID), handle_document))
     app.add_handler(CallbackQueryHandler(cb_report,  pattern="^report:"))
     app.add_handler(CallbackQueryHandler(cb_delete,  pattern="^delobj:"))
     app.add_handler(CallbackQueryHandler(cb_assign,  pattern="^assign:"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_router))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Chat(OWNER_ID), menu_router))
 
     # Напоминания: каждый день в REMIND_HOUR:00 UTC
     app.job_queue.run_daily(
