@@ -415,18 +415,18 @@ async def send_reminders(ctx: ContextTypes.DEFAULT_TYPE):
             continue
         plan = obj["plan_rent"] + obj["plan_utility"]
         try:
+            date_str = remind_date.strftime('%d.%m.%Y')
+            obj_name = obj['name']
+            due_day = obj['due_day']
+            msg = (
+                "Напоминание об оплате\n\n"
+                + "Объект: " + obj_name + "\n"
+                + "Срок: " + str(due_day) + "-е число (" + date_str + ")\n"
+                + "Ожидается: " + f"{plan:,.0f}" + " руб\n\n"
+                + "Оплата за " + period + " ещё не поступала."
+            )
             await ctx.bot.send_message(
                 chat_id=obj["chat_id"],
-                date_str = remind_date.strftime('%d.%m.%Y')
-                obj_name = obj['name']
-                due_day = obj['due_day']
-                msg = (
-                    "⏰ Напоминание об оплате\n\n"
-                    + "Объект: " + obj_name + "\n"
-                    + "Срок: " + str(due_day) + "-е число (" + date_str + ")\n"
-                    + "Ожидается: " + f"{plan:,.0f}" + " руб\n\n"
-                    + "Оплата за " + period + " ещё не поступала."
-                )
                 text=msg,
                 parse_mode="Markdown",
             )
