@@ -114,7 +114,7 @@ async def handle_excel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             name        = str(row[0]).strip()
             tenant_name = str(row[1]).strip()
-            plan_rent   = float(str(row[2]).replace(" ","").replace(",","."))
+            plan_rent   = float(str(row[2]).replace("\xa0","").replace(" ","").replace(",","."))
             due_day     = int(row[3])
             assert 1 <= due_day <= 28
         except Exception:
