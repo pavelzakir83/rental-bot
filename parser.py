@@ -32,7 +32,7 @@ def _parse(text: str) -> dict:
 def parse_photo(photo_bytes: bytes) -> dict:
     b64 = base64.standard_b64encode(photo_bytes).decode()
     r = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=600,
         messages=[{"role":"user","content":[
             {"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":b64}},
@@ -43,7 +43,7 @@ def parse_photo(photo_bytes: bytes) -> dict:
 
 def parse_text(text: str) -> dict:
     r = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=600,
         messages=[{"role":"user","content":f"{PROMPT}\n\nДокумент:\n{text}"}]
     )
