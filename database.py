@@ -3,7 +3,7 @@ import os
 from contextlib import contextmanager
 from datetime import datetime
 
-DB_PATH = os.getenv("DB_PATH", "rental.db")
+DB_PATH = os.getenv("DB_PATH", "/data/rental.db")
 
 @contextmanager
 def conn():
@@ -16,127 +16,218 @@ def conn():
         c.close()
 
 def init():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with conn() as c:
         c.executescript("""
             CREATE TABLE IF NOT EXISTS objects (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id      INTEGER NOT NULL,
                 name         TEXT NOT NULL,
+                tenant_name  TEXT NOT NULL,
                 plan_rent    REAL NOT NULL DEFAULT 0,
-                plan_utility REAL NOT NULL DEFAULT 0,
                 due_day      INTEGER NOT NULL DEFAULT 10,
                 active       INTEGER NOT NULL DEFAULT 1,
                 created_at   TEXT DEFAULT (datetime('now'))
             );
-            CREATE TABLE IF NOT EXISTS payments (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                object_id    INTEGER NOT NULL REFERENCES objects(id),
-                amount       REAL NOT NULL,
-                payment_type TEXT NOT NULL DEFAULT 'unknown',
-                date         TEXT NOT NULL,
-                period       TEXT NOT NULL,
-                payer        TEXT,
-                notes        TEXT,
-                created_at   TEXT DEFAULT (datetime('now'))
+
+            CREATE TABLE IF NOT EXISTS rent_payments (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                object_id  INTEGER NOT NULL REFERENCES objects(id),
+                amount     REAL NOT NULL,
+                date       TEXT NOT NULL,
+                period     TEXT NOT NULL,
+                sender     TEXT,
+                notes      TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
             );
-            CREATE INDEX IF NOT EXISTS idx_obj_chat ON objects(chat_id);
-            CREATE INDEX IF NOT EXISTS idx_pay_obj_period ON payments(object_id, period);
+
+            CREATE TABLE IF NOT EXISTS utility_bills (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                object_id     INTEGER NOT NULL REFERENCES objects(id),
+                amount        REAL NOT NULL,
+                period        TEXT NOT NULL,
+                received_date TEXT NOT NULL,
+                notes         TEXT,
+                created_at    TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS utility_payments (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                object_id  INTEGER NOT NULL REFERENCES objects(id),
+                bill_id    INTEGER REFERENCES utility_bills(id),
+                amount     REAL NOT NULL,
+                date       TEXT NOT NULL,
+                period     TEXT NOT NULL,
+                sender     TEXT,
+                notes      TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_obj_chat    ON objects(chat_id);
+            CREATE INDEX IF NOT EXISTS idx_rp_obj_per  ON rent_payments(object_id, period);
+            CREATE INDEX IF NOT EXISTS idx_ub_obj_per  ON utility_bills(object_id, period);
+            CREATE INDEX IF NOT EXISTS idx_up_obj_per  ON utility_payments(object_id, period);
         """)
+    print(f"✅ БД инициализирована: {DB_PATH}")
 
-# ── Objects ──────────────────────────────────────────────────
+# ── Objects ──────────────────────────────────────────────────────────────────
 
-def add_object(chat_id, name, plan_rent, plan_utility, due_day):
+def upsert_object(chat_id: int, name: str, tenant_name: str,
+                  plan_rent: float, due_day: int) -> tuple[int, str]:
+    """Вставляет или обновляет объект. Возвращает (id, 'created'|'updated'|'unchanged')."""
     with conn() as c:
-        r = c.execute(
-            "INSERT INTO objects (chat_id,name,plan_rent,plan_utility,due_day) VALUES (?,?,?,?,?)",
-            (chat_id, name, plan_rent, plan_utility, due_day)
-        )
-        return r.lastrowid
+        row = c.execute(
+            "SELECT * FROM objects WHERE chat_id=? AND tenant_name=?",
+            (chat_id, tenant_name)
+        ).fetchone()
+        if not row:
+            r = c.execute(
+                "INSERT INTO objects (chat_id,name,tenant_name,plan_rent,due_day) VALUES (?,?,?,?,?)",
+                (chat_id, name, tenant_name, plan_rent, due_day)
+            )
+            return r.lastrowid, "created"
+        changed = (row["name"] != name or row["plan_rent"] != plan_rent
+                   or row["due_day"] != due_day or not row["active"])
+        if changed:
+            c.execute(
+                "UPDATE objects SET name=?,plan_rent=?,due_day=?,active=1 WHERE id=?",
+                (name, plan_rent, due_day, row["id"])
+            )
+            return row["id"], "updated"
+        return row["id"], "unchanged"
 
-def get_objects(chat_id):
+def get_objects(chat_id: int) -> list[dict]:
     with conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT * FROM objects WHERE chat_id=? AND active=1 ORDER BY name", (chat_id,)
+            "SELECT * FROM objects WHERE chat_id=? AND active=1 ORDER BY name",
+            (chat_id,)
         ).fetchall()]
 
-def get_object(obj_id):
+def get_object(obj_id: int) -> dict | None:
     with conn() as c:
         r = c.execute("SELECT * FROM objects WHERE id=?", (obj_id,)).fetchone()
         return dict(r) if r else None
 
-def update_object(obj_id, name, plan_rent, plan_utility, due_day):
-    with conn() as c:
-        c.execute(
-            "UPDATE objects SET name=?,plan_rent=?,plan_utility=?,due_day=? WHERE id=?",
-            (name, plan_rent, plan_utility, due_day, obj_id)
-        )
-
-def delete_object(obj_id):
-    with conn() as c:
-        c.execute("UPDATE objects SET active=0 WHERE id=?", (obj_id,))
-
-def get_all_active_objects():
-    """Для планировщика напоминаний — все объекты всех пользователей."""
+def get_all_active_objects() -> list[dict]:
     with conn() as c:
         return [dict(r) for r in c.execute(
             "SELECT * FROM objects WHERE active=1"
         ).fetchall()]
 
-# ── Payments ─────────────────────────────────────────────────
+def find_object_by_tenant(chat_id: int, sender_name: str) -> dict | None:
+    """Ищет объект по имени арендатора (частичное совпадение)."""
+    if not sender_name:
+        return None
+    objects = get_objects(chat_id)
+    s = sender_name.lower().strip()
+    for o in objects:
+        t = o["tenant_name"].lower().strip()
+        if s == t or s in t or t in s:
+            return o
+    return None
 
-def add_payment(object_id, amount, payment_type, date, period, payer=None, notes=None):
+# ── Rent Payments ────────────────────────────────────────────────────────────
+
+def add_rent_payment(object_id: int, amount: float, date: str,
+                     period: str, sender: str = None, notes: str = None) -> int:
     with conn() as c:
         r = c.execute(
-            "INSERT INTO payments (object_id,amount,payment_type,date,period,payer,notes) VALUES (?,?,?,?,?,?,?)",
-            (object_id, amount, payment_type, date, period, payer, notes)
+            "INSERT INTO rent_payments (object_id,amount,date,period,sender,notes) VALUES (?,?,?,?,?,?)",
+            (object_id, amount, date, period, sender, notes)
         )
         return r.lastrowid
 
-def get_monthly_summary(object_id, period):
-    with conn() as c:
-        rows = c.execute(
-            "SELECT payment_type, amount FROM payments WHERE object_id=? AND period=?",
-            (object_id, period)
-        ).fetchall()
-    paid_rent = paid_util = paid_both = 0.0
-    for r in rows:
-        t, a = r["payment_type"], r["amount"]
-        if t == "rent":      paid_rent += a
-        elif t == "utility": paid_util += a
-        else:                paid_both += a
-    paid_rent += paid_both / 2
-    paid_util += paid_both / 2
-    return {"paid_rent": round(paid_rent, 2), "paid_utility": round(paid_util, 2)}
-
-def get_payments(object_id, period=None):
+def get_rent_payments(object_id: int, period: str = None) -> list[dict]:
     with conn() as c:
         if period:
             rows = c.execute(
-                "SELECT * FROM payments WHERE object_id=? AND period=? ORDER BY date",
+                "SELECT * FROM rent_payments WHERE object_id=? AND period=? ORDER BY date",
                 (object_id, period)
             ).fetchall()
         else:
             rows = c.execute(
-                "SELECT * FROM payments WHERE object_id=? ORDER BY date DESC LIMIT 30",
+                "SELECT * FROM rent_payments WHERE object_id=? ORDER BY date DESC",
                 (object_id,)
             ).fetchall()
-    return [dict(r) for r in rows]
+        return [dict(r) for r in rows]
 
-def has_payment_this_period(object_id, period):
+def get_rent_paid(object_id: int, period: str) -> float:
     with conn() as c:
         r = c.execute(
-            "SELECT COUNT(*) as n FROM payments WHERE object_id=? AND period=?",
+            "SELECT COALESCE(SUM(amount),0) as total FROM rent_payments WHERE object_id=? AND period=?",
             (object_id, period)
         ).fetchone()
-    return r["n"] > 0
+        return r["total"]
 
-def match_object(chat_id, hint: str | None):
-    if not hint:
-        return None
-    objects = get_objects(chat_id)
-    h = hint.lower()
-    for o in objects:
-        n = o["name"].lower()
-        if h in n or n in h:
-            return o
-    return None
+def has_rent_payment(object_id: int, period: str) -> bool:
+    return get_rent_paid(object_id, period) > 0
+
+# ── Utility Bills ────────────────────────────────────────────────────────────
+
+def add_utility_bill(object_id: int, amount: float, period: str,
+                     received_date: str, notes: str = None) -> int:
+    with conn() as c:
+        r = c.execute(
+            "INSERT INTO utility_bills (object_id,amount,period,received_date,notes) VALUES (?,?,?,?,?)",
+            (object_id, amount, period, received_date, notes)
+        )
+        return r.lastrowid
+
+def get_utility_bills(object_id: int, period: str = None) -> list[dict]:
+    with conn() as c:
+        if period:
+            rows = c.execute(
+                "SELECT * FROM utility_bills WHERE object_id=? AND period=? ORDER BY received_date",
+                (object_id, period)
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM utility_bills WHERE object_id=? ORDER BY period DESC",
+                (object_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+def has_utility_bill(object_id: int, period: str) -> bool:
+    with conn() as c:
+        r = c.execute(
+            "SELECT COUNT(*) as n FROM utility_bills WHERE object_id=? AND period=?",
+            (object_id, period)
+        ).fetchone()
+        return r["n"] > 0
+
+def find_matching_bill(object_id: int, period: str, amount: float) -> dict | None:
+    """Ищет квитанцию с точным совпадением суммы."""
+    with conn() as c:
+        r = c.execute(
+            """SELECT ub.* FROM utility_bills ub
+               LEFT JOIN utility_payments up ON up.bill_id = ub.id
+               WHERE ub.object_id=? AND ub.period=? AND ub.amount=? AND up.id IS NULL
+               LIMIT 1""",
+            (object_id, period, amount)
+        ).fetchone()
+        return dict(r) if r else None
+
+# ── Utility Payments ─────────────────────────────────────────────────────────
+
+def add_utility_payment(object_id: int, bill_id: int | None, amount: float,
+                        date: str, period: str, sender: str = None, notes: str = None) -> int:
+    with conn() as c:
+        r = c.execute(
+            "INSERT INTO utility_payments (object_id,bill_id,amount,date,period,sender,notes) VALUES (?,?,?,?,?,?,?)",
+            (object_id, bill_id, amount, date, period, sender, notes)
+        )
+        return r.lastrowid
+
+def get_utility_payments(object_id: int, period: str = None) -> list[dict]:
+    with conn() as c:
+        if period:
+            rows = c.execute(
+                "SELECT * FROM utility_payments WHERE object_id=? AND period=? ORDER BY date",
+                (object_id, period)
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM utility_payments WHERE object_id=? ORDER BY period DESC",
+                (object_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]

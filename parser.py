@@ -5,21 +5,27 @@ import anthropic
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-PROMPT = """Из документа/изображения извлеки данные о платеже. Верни ТОЛЬКО JSON без пояснений:
+PROMPT = """Из документа определи тип и извлеки данные. Верни ТОЛЬКО JSON без пояснений:
 {
-  "is_payment": true/false,
-  "object_hint": "название объекта, адрес, номер квартиры — всё что поможет идентифицировать",
+  "doc_type": "rent_payment|utility_bill|utility_payment|unknown",
   "amount": 12500.00,
-  "payment_type": "rent|utility|both|unknown",
-  "date": "YYYY-MM-DD или null",
   "period": "YYYY-MM или null",
-  "payer": "имя плательщика или null",
-  "notes": "важные детали"
+  "date": "YYYY-MM-DD или null",
+  "object_hint": "адрес или название объекта из документа или null",
+  "sender_hint": "имя плательщика из документа или null",
+  "notes": "важные детали или null"
 }
-Если это НЕ платёж — {"is_payment": false}.
-amount — только число в рублях."""
 
-def _parse_response(text: str) -> dict:
+Типы документов:
+- rent_payment: банковский чек/перевод, в назначении есть слово аренда/найм
+- utility_bill: квитанция ЖКУ — есть "начислено"/"к оплате"/"период начисления", НЕТ подтверждения оплаты
+- utility_payment: чек оплаты коммунальных услуг — есть "оплачено"/"принято" для ЖКУ/коммуналки
+- unknown: тип не определён однозначно
+
+Если документ не финансовый — верни {"doc_type": "unknown", "amount": null}
+amount — только число в рублях, без символов."""
+
+def _parse(text: str) -> dict:
     raw = text.strip().replace("```json","").replace("```","").strip()
     return json.loads(raw)
 
@@ -33,7 +39,7 @@ def parse_photo(photo_bytes: bytes) -> dict:
             {"type":"text","text":PROMPT}
         ]}]
     )
-    return _parse_response(r.content[0].text)
+    return _parse(r.content[0].text)
 
 def parse_text(text: str) -> dict:
     r = client.messages.create(
@@ -41,4 +47,4 @@ def parse_text(text: str) -> dict:
         max_tokens=600,
         messages=[{"role":"user","content":f"{PROMPT}\n\nДокумент:\n{text}"}]
     )
-    return _parse_response(r.content[0].text)
+    return _parse(r.content[0].text)
