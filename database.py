@@ -16,7 +16,9 @@ def conn():
         c.close()
 
 def init():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    dirname = os.path.dirname(DB_PATH)
+    if dirname:
+        os.makedirs(dirname, exist_ok=True)
     with conn() as c:
         c.executescript("""
             CREATE TABLE IF NOT EXISTS objects (
