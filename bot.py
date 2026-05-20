@@ -53,15 +53,14 @@ def get_sender_name(update: Update) -> str | None:
     msg = update.message
     if not msg:
         return None
-    # Пересланное сообщение
-    if msg.forward_origin:
-        fo = msg.forward_origin
-        if hasattr(fo, "sender_user") and fo.sender_user:
-            return fo.sender_user.full_name
-        if hasattr(fo, "sender_user_name") and fo.sender_user_name:
-            return fo.sender_user_name
-        if hasattr(fo, "chat") and fo.chat:
-            return fo.chat.title or fo.chat.username
+    # Пересланное сообщение (PTB v20.7)
+    if getattr(msg, 'forward_from', None):
+        return msg.forward_from.full_name
+    if getattr(msg, 'forward_sender_name', None):
+        return msg.forward_sender_name
+    if getattr(msg, 'forward_from_chat', None):
+        chat = msg.forward_from_chat
+        return chat.title or chat.username or str(chat.id)
     # Прямое сообщение
     user = update.effective_user
     if user:
